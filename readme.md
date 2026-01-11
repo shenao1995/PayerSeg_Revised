@@ -1,6 +1,7 @@
 **PayerSeg\_Revised: Improved Fully Automated Spine Segmentation Framework**
 
 ## **📖 Project Overview**
+![Comparison: Standard vs PayerSeg_Revised Pipeline](assets/seg_compare.jpg)
 
 **PayerSeg\_Revised** is a deep learning-based system for fully automated spine CT segmentation. This project is an improved and refactored version of the [Coarse to Fine Vertebrae Localization and Segmentation with SpatialConfiguration-Net and U-Net](https://www.scitepress.org/Link.aspx?doi=10.5220/0008975201240133) method proposed by Payer et al., which was the winning solution of the VerSe Challenge.
 
@@ -40,7 +41,7 @@ The system adopts a **Coarse-to-Fine** strategy, divided into three cascaded sta
 
 ## **📂 Directory Structure**
 
-Plaintext
+```Plaintext
 
 PayerSeg\_Revised/  
 ├── Data/                   \# Data directory (Raw Images & Results)  
@@ -53,7 +54,7 @@ PayerSeg\_Revised/
 │   ├── dataset\_overlap\_cropped.py    \# Data loading and augmentation  
 │   └── network.py                    \# Network architecture definitions  
 └── requirements.txt        \# Project dependencies
-
+```
 ## **💻 Quick Start**
 
 ### **Prerequisites**
@@ -66,7 +67,7 @@ PayerSeg\_Revised/
 
 Use the main entry script to complete the full prediction process:
 
-Bash
+```bash
 
 python PayerSeg\_Revised2/main\_test\_overlap\_cropped.py \\  
   \--input\_folder "path/to/raw\_images" \\  
@@ -74,6 +75,7 @@ python PayerSeg\_Revised2/main\_test\_overlap\_cropped.py \\
   \--model\_step1 "path/to/step1\_weights" \\  
   \--model\_step2 "path/to/step2\_weights" \\  
   \--model\_step3 "path/to/step3\_weights"
+```
 
 ## **📊 Results Structure**
 
