@@ -42,7 +42,6 @@ The system adopts a **Coarse-to-Fine** strategy, divided into three cascaded sta
 ## **📂 Directory Structure**
 
 ```Plaintext
-
 PayerSeg\_Revised/  
 ├── Data/                   \# Data directory (Raw Images & Results)  
 ├── model\_weights/          \# Pre-trained model weights (Step 1, 2, 3\)  
@@ -68,7 +67,6 @@ PayerSeg\_Revised/
 Use the main entry script to complete the full prediction process:
 
 ```bash
-
 python PayerSeg\_Revised2/main\_test\_overlap\_cropped.py \\  
   \--input\_folder "path/to/raw\_images" \\  
   \--output\_folder "path/to/save\_results" \\  
