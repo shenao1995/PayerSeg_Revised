@@ -85,5 +85,5 @@ After the program finishes, the following result structure will be generated for
 
 ---
 
-Acknowledgements:  
+## **Acknowledgements** 
 This project is an improvement based on the work related to the VerSe 2020 Challenge.
