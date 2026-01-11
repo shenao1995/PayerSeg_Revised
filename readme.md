@@ -2,7 +2,7 @@
 
 ## **📖 Project Overview**
 
-**PayerSeg\_Revised** is a deep learning-based system for fully automated spine CT segmentation. This project is an improved and refactored version of the *Coarse to Fine Vertebrae Localization and Segmentation* method proposed by Payer et al., which was the winning solution of the VerSe Challenge.
+**PayerSeg\_Revised** is a deep learning-based system for fully automated spine CT segmentation. This project is an improved and refactored version of the [Coarse to Fine Vertebrae Localization and Segmentation with SpatialConfiguration-Net and U-Net](https://www.scitepress.org/Link.aspx?doi=10.5220/0008975201240133) method proposed by Payer et al., which was the winning solution of the VerSe Challenge.
 
 We have re-engineered the original architecture by consolidating the three independent processing stages into a highly efficient automated inference pipeline. Furthermore, we have **retrained all model weights** using a high-quality **private dataset** to better adapt to specific clinical data distributions, significantly improving prediction accuracy and processing efficiency.
 
@@ -86,4 +86,4 @@ After the program finishes, the following result structure will be generated for
 ---
 
 ## **Acknowledgements** 
-This project is an improvement based on the work related to the VerSe 2020 Challenge.
+This project is an improvement based on the work related to the [VerSe 2020 Challenge](https://github.com/christianpayer/MedicalDataAugmentationTool-VerSe).
