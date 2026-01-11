@@ -1,7 +1,3 @@
-Here is the English version of the project description, ready to be used in your README.md.
-
-# ---
-
 **PayerSeg\_Revised: Improved Fully Automated Spine Segmentation Framework**
 
 ## **📖 Project Overview**
