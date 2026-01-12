@@ -67,12 +67,12 @@ PayerSeg_Revised/
 Use the main entry script to complete the full prediction process:
 
 ```bash
-python PayerSeg\_Revised2/main\_test\_overlap\_cropped.py \\  
-  \--input\_folder "path/to/raw\_images" \\  
-  \--output\_folder "path/to/save\_results" \\  
-  \--model\_step1 "path/to/step1\_weights" \\  
-  \--model\_step2 "path/to/step2\_weights" \\  
-  \--model\_step3 "path/to/step3\_weights"
+python PayerSeg_Revised2/main_test_overlap_cropped.py \\  
+  \--input_folder "path/to/raw_images" \\  
+  \--output_folder "path/to/save_results" \\  
+  \--model_step1 "path/to/step1_weights" \\  
+  \--model_step2 "path/to/step2_weights" \\  
+  \--model_step3 "path/to/step3_weights"
 ```
 
 ## **📊 Results Structure**
