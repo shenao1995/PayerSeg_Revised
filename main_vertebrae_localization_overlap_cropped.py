@@ -9,6 +9,7 @@ import utils.io.landmark
 import utils.io.image
 from dataset_overlap_cropped import Dataset
 from network import SpatialConfigurationNet, Unet
+from tensorflow.keras import mixed_precision
 from tensorflow_train_v2.train_loop import MainLoopBase
 from tensorflow_train_v2.utils.output_folder_handler import OutputFolderHandler
 from tqdm import tqdm
@@ -21,13 +22,22 @@ from vertebrae_localization_postprocessing import add_landmarks_from_neighbors, 
     reshift_landmarks
 import multiprocessing
 from utils.save_read_dict import read_dict
+from utils.get_full_image import get_full_image
+from utils.landmark.show_full_image import get_all_landmarks
 
 
 class MainLoop(MainLoopBase):
-    def __init__(self, cv, config, input_folder, output_folder):
+    def __init__(self, cv, config, input_folder, output_folder, setup_folder, model_path):
         super().__init__()
         self.cv = cv
         self.config = config
+
+        # 【修复1】开启混合精度，减少显存占用防止 OOM
+        self.use_mixed_precision = True
+        if self.use_mixed_precision:
+            policy = mixed_precision.Policy('mixed_float16')
+            mixed_precision.set_global_policy(policy)
+
         self.batch_size = 1
         self.learning_rate = config.learning_rate
         self.max_iter = 50000
@@ -48,14 +58,20 @@ class MainLoop(MainLoopBase):
 
         self.input_folder = input_folder
         self.base_output_folder = output_folder
+        self.setup_folder = setup_folder
         self.image_size = [None, None, None]
         self.image_spacing = [config.spacing] * 3
-        self.max_image_size_for_cropped_test = [128, 128, 448]
-        self.cropped_inc = [0, 128, 0, 0]
+
+        # 【修复2】减小裁剪尺寸，防止 OOM
+        self.max_image_size_for_cropped_test = [96, 96, 128]  # 原 [128, 128, 448]
+        self.cropped_inc = [0, 64, 0, 0]  # 步长
         self.save_output_images = True
         self.sigma_regularization = 100.0
 
-        self.cropped_images_dict = read_dict(self.base_output_folder)
+        # 开启后处理
+        self.evaluate_landmarks_postprocessing = True
+
+        self.cropped_images_dict = read_dict(self.input_folder)
 
     def init_model(self):
         self.sigmas_variables = tf.Variable([self.heatmap_sigma] * self.num_landmarks, name='sigmas', trainable=True)
@@ -68,6 +84,8 @@ class MainLoop(MainLoopBase):
         self.learning_rate_schedule = tf.keras.optimizers.schedules.ExponentialDecay(self.learning_rate, self.max_iter,
                                                                                      0.1)
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=self.learning_rate_schedule, amsgrad=False)
+        if self.use_mixed_precision:
+            self.optimizer = mixed_precision.LossScaleOptimizer(self.optimizer)
 
     def init_checkpoint(self):
         self.checkpoint = tf.train.Checkpoint(model=self.model,
@@ -83,7 +101,7 @@ class MainLoop(MainLoopBase):
     def init_datasets(self):
         dataset_parameters = dict(
             image_base_folder=self.input_folder,
-            setup_base_folder=self.base_output_folder,
+            setup_base_folder=self.setup_folder,
             image_size=self.image_size,
             image_spacing=self.image_spacing,
             num_landmarks=self.num_landmarks,
@@ -161,87 +179,97 @@ class MainLoop(MainLoopBase):
         heatmap_maxima = HeatmapTest(channel_axis, False, return_multiple_maxima=True, min_max_value=0.05,
                                      smoothing_sigma=2.0)
 
-        with open('possible_successors.pickle', 'rb') as f:
-            possible_successors = pickle.load(f)
-        with open('units_distances.pickle', 'rb') as f:
-            offsets_mean, distances_mean, distances_std = pickle.load(f)
-        spine_postprocessing = SpinePostprocessingGraph(num_landmarks=self.num_landmarks,
-                                                        possible_successors=possible_successors,
-                                                        offsets_mean=offsets_mean,
-                                                        distances_mean=distances_mean,
-                                                        distances_std=distances_std,
-                                                        bias=2.0,
-                                                        l=0.2)
+        # 尝试加载后处理参数，如果失败则跳过后处理
+        try:
+            with open('possible_successors.pickle', 'rb') as f:
+                possible_successors = pickle.load(f)
+            with open('units_distances.pickle', 'rb') as f:
+                offsets_mean, distances_mean, distances_std = pickle.load(f)
+        except Exception as e:
+            print(f"Warning: Pickle files not found: {e}. Postprocessing disabled.")
+            self.evaluate_landmarks_postprocessing = False
+
+        if self.evaluate_landmarks_postprocessing:
+            spine_postprocessing = SpinePostprocessingGraph(num_landmarks=self.num_landmarks,
+                                                            possible_successors=possible_successors,
+                                                            offsets_mean=offsets_mean,
+                                                            distances_mean=distances_mean,
+                                                            distances_std=distances_std,
+                                                            bias=2.0,
+                                                            l=0.2)
 
         landmarks = {}
         num_entries = self.dataset_val.num_entries()
+        full_image_landmarks_dict = {}
+
+        # 根目录文件路径（用于Step3读取）
+        root_landmarks_path = os.path.join(self.base_output_folder, 'landmarks.csv')
+        root_valid_landmarks_path = os.path.join(self.base_output_folder, 'valid_landmarks.csv')
 
         for _ in tqdm(range(num_entries), desc='Localization'):
-            dataset_entry = self.dataset_val.get_next()
-            current_id = dataset_entry['id']['image_id']
-            input_image = dataset_entry['datasources']['image']
+            try:
+                dataset_entry = self.dataset_val.get_next()
+                current_id = dataset_entry['id']['image_id']
+                datasources = dataset_entry['datasources']
+                input_image = datasources['image']
 
-            image, prediction, prediction_local, prediction_spatial, transformation = self.test_cropped_image(
-                dataset_entry)
+                full_image = get_full_image(current_id, self.cropped_images_dict, input_image)
 
-            # 【修改】创建独立文件夹 Results/Filename/step2_vertebrae_localization
-            sample_dir = os.path.join(self.base_output_folder, current_id, 'step2_vertebrae_localization')
-            if self.save_output_images:
+                image, prediction, prediction_local, prediction_spatial, transformation = self.test_cropped_image(
+                    dataset_entry)
+
+                local_maxima_landmarks = heatmap_maxima.get_landmarks(prediction, input_image, self.image_spacing,
+                                                                      transformation)
+                curr_landmarks_no_postprocessing = [
+                    l[0] if len(l) > 0 else Landmark(coords=[np.nan] * 3, is_valid=False) for l in
+                    local_maxima_landmarks]
+
+                curr_landmarks = curr_landmarks_no_postprocessing
+
+                if self.evaluate_landmarks_postprocessing:
+                    try:
+                        local_maxima_landmarks = add_landmarks_from_neighbors(local_maxima_landmarks)
+                        curr_landmarks = spine_postprocessing.solve_local_heatmap_maxima(local_maxima_landmarks)
+                        curr_landmarks = reshift_landmarks(curr_landmarks)
+                        curr_landmarks = filter_landmarks_top_bottom(curr_landmarks, full_image)
+                    except Exception as e:
+                        # 【修复3】解决中文编码错误：用 repr(e) 安全打印错误信息
+                        tqdm.write(f"Postprocessing error for {current_id}: {repr(e)}")
+                        curr_landmarks = curr_landmarks_no_postprocessing
+
+                landmarks[current_id] = curr_landmarks
+
+                # 【修复4】增量保存：每次处理完一个病例都更新根目录 CSV
+                utils.io.landmark.save_points_csv(landmarks, root_landmarks_path)
+                self.save_valid_landmarks_list(landmarks, root_valid_landmarks_path)
+
+                # 【修复5】创建子文件夹并保存 per-case 结果
+                sample_dir = os.path.join(self.base_output_folder, current_id, 'step2_vertebrae_localization')
                 if not os.path.exists(sample_dir):
                     os.makedirs(sample_dir)
 
-                origin = transformation.TransformPoint(np.zeros(3, np.float64))
-                heatmap_normalization_mode = (-1, 1)
-                image_type = np.uint8
+                if self.save_output_images:
+                    vis.visualize_landmark_projections(full_image, curr_landmarks,
+                                                       filename=os.path.join(sample_dir,
+                                                                             current_id + '_landmarks_final.png'))
+                    # 保存热图
+                    origin = transformation.TransformPoint(np.zeros(3, np.float64))
+                    utils.io.image.write_multichannel_np(prediction,
+                                                         os.path.join(sample_dir, current_id + '_prediction.mha'),
+                                                         output_normalization_mode=(-1, 1),
+                                                         sitk_image_output_mode='vector', data_format=self.data_format,
+                                                         image_type=np.uint8, spacing=self.image_spacing, origin=origin)
 
-                utils.io.image.write_multichannel_np(image,
-                                                     os.path.join(sample_dir, current_id + '_input.mha'),
-                                                     output_normalization_mode='min_max',
-                                                     sitk_image_output_mode='vector', data_format=self.data_format,
-                                                     image_type=image_type, spacing=self.image_spacing, origin=origin)
-                utils.io.image.write_multichannel_np(prediction,
-                                                     os.path.join(sample_dir, current_id + '_prediction.mha'),
-                                                     output_normalization_mode=heatmap_normalization_mode,
-                                                     sitk_image_output_mode='vector', data_format=self.data_format,
-                                                     image_type=image_type, spacing=self.image_spacing, origin=origin)
-                utils.io.image.write_multichannel_np(prediction_local,
-                                                     os.path.join(sample_dir, current_id + '_prediction_local.mha'),
-                                                     output_normalization_mode=heatmap_normalization_mode,
-                                                     sitk_image_output_mode='vector', data_format=self.data_format,
-                                                     image_type=image_type, spacing=self.image_spacing, origin=origin)
-                utils.io.image.write_multichannel_np(prediction_spatial,
-                                                     os.path.join(sample_dir, current_id + '_prediction_spatial.mha'),
-                                                     output_normalization_mode=heatmap_normalization_mode,
-                                                     sitk_image_output_mode='vector', data_format=self.data_format,
-                                                     image_type=image_type, spacing=self.image_spacing, origin=origin)
-
-            local_maxima_landmarks = heatmap_maxima.get_landmarks(prediction, input_image, self.image_spacing,
-                                                                  transformation)
-            curr_landmarks_no_postprocessing = [l[0] if len(l) > 0 else Landmark(coords=[np.nan] * 3, is_valid=False)
-                                                for l in local_maxima_landmarks]
-
-            if self.save_output_images:
-                vis.visualize_landmark_projections(input_image, curr_landmarks_no_postprocessing,
-                                                   filename=os.path.join(sample_dir, current_id + '_landmarks.png'))
-
-            try:
-                local_maxima_landmarks = add_landmarks_from_neighbors(local_maxima_landmarks)
-                curr_landmarks = spine_postprocessing.solve_local_heatmap_maxima(local_maxima_landmarks)
-                curr_landmarks = reshift_landmarks(curr_landmarks)
-                curr_landmarks = filter_landmarks_top_bottom(curr_landmarks, input_image)
-            except Exception:
-                print('Error in postprocessing', current_id)
-                curr_landmarks = curr_landmarks_no_postprocessing
-
-            landmarks[current_id] = curr_landmarks
-
-            if self.save_output_images:
-                vis.visualize_landmark_projections(input_image, curr_landmarks,
-                                                   filename=os.path.join(sample_dir, current_id + '_landmarks_pp.png'))
-
-        # 【注意】CSV 文件保持在根目录
-        utils.io.landmark.save_points_csv(landmarks, os.path.join(self.base_output_folder, 'landmarks.csv'))
-        self.save_valid_landmarks_list(landmarks, os.path.join(self.base_output_folder, 'valid_landmarks.csv'))
+                full_image_landmarks_dict = get_all_landmarks(current_id=current_id,
+                                                              curr_landmarks_no_postprocessing=curr_landmarks_no_postprocessing,
+                                                              curr_landmarks=curr_landmarks,
+                                                              full_image_landmarks_dict=full_image_landmarks_dict,
+                                                              cropped_images_dict=self.cropped_images_dict)
+            except Exception as e:
+                # 捕获循环内的严重错误（如 OOM），避免中断整个流程，并安全打印
+                tqdm.write(f"CRITICAL ERROR processing case: {repr(e)}")
+                # 显式清理
+                tf.keras.backend.clear_session()
 
 
 class dotdict(dict):
@@ -259,7 +287,8 @@ def run_inference_step2(config_dict, input_folder, output_folder, model_path):
             print(e)
 
     config = dotdict(config_dict)
-    with MainLoop(0, config, input_folder, output_folder) as loop:
+    # setup_folder 设为 output_folder 以读取 Step 1 的结果
+    with MainLoop(0, config, input_folder, output_folder, output_folder, model_path) as loop:
         loop.load_model_filename = model_path
         loop.run_test()
 

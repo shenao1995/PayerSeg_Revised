@@ -1,9 +1,8 @@
-
 import numpy as np
 import scipy.ndimage
 import math
 import skimage.morphology
-import skimage.measure
+from skimage import measure
 import skimage.draw
 import itertools
 from transformations.intensity.np.smooth import gaussian
@@ -73,13 +72,23 @@ def split_by_axis(image, axis=0):
     return [np.squeeze(image, axis=axis) for image in image_list]
 
 
-def split_label_image(image, labels, dtype=None):
-    if dtype is None:
-        dtype = image.dtype
-    image_list = []
+def split_label_image(image, labels, output_type=np.float32):
+    split_images = []
     for label in labels:
-        image_list.append((image == label).astype(dtype))
-    return image_list
+        split_image = (image == label).astype(output_type)
+        split_images.append(split_image)
+    return split_images
+
+
+def split_label_image_with_imp(image, labels, output_type=np.float32):
+    split_images = []
+    for label in labels:
+        if label == 0:
+            split_image = (image == label).astype(output_type)
+        else:
+            split_image = (image == label).astype(output_type) * 10
+        split_images.append(split_image)
+    return split_images
 
 
 def split_label_image_with_unknown_labels(image, dtype=None):
@@ -118,30 +127,21 @@ def relabel_ascending(image, dtype=None):
     return relabeled
 
 
-def smooth_label_images(images, sigma=1, dtype=None):
-    if dtype is None:
-        dtype = images[0].dtype
-    smoothed_images = [gaussian(image, sigma=sigma) for image in images]
-    smoothed = np.stack(smoothed_images, 0)
-    label_images = np.argmax(smoothed, axis=0)
-    return split_label_image(label_images, range(0, len(images)), dtype=dtype)
+def smooth_label_images(label_images, sigma, output_type=np.float32):
+    smoothed_label_images = []
+    for label_image in label_images:
+        smoothed_label_image = smooth_label_image(label_image, sigma)
+        smoothed_label_images.append(smoothed_label_image.astype(output_type))
+    return smoothed_label_images
 
 
-def argmax(image, axis=0, dtype=np.uint8):
-    """
-    Return the argmax over the given axis.
-    Performance tip: If axis == len(image.shape) - 1, no internal copy operation is needed, otherwise, this operation may need lots of memory.
-    :param image: The np image.
-    :param axis: The axis to take the argmax from.
-    :param dtype: The output dtype.
-    :return: The np array of the argmax.
-    """
-    if axis < 0:
-        axis = len(image.shape) + axis
-    shape = image.shape[:axis] + image.shape[axis+1:]
-    max_index_np = np.zeros(shape, dtype=dtype)
-    np.argmax(image, axis=axis, out=max_index_np)
-    return max_index_np
+def smooth_label_image(label_image, sigma):
+    from transformations.intensity.np.smooth import gaussian
+    return gaussian(label_image, sigma)
+
+
+def argmax(image, axis):
+    return np.argmax(image, axis=axis)
 
 
 def gallery(images, num_cols=None):
@@ -210,13 +210,20 @@ def split_connected_components(labels, num):
 
 
 def largest_connected_component(image):
-    labels, num = connected_component(image)
-    if num == 0:
-        return np.zeros_like(image)
-    counts = np.bincount(labels.flatten())
-    largest_label = np.argmax(counts[1:]) + 1
-    lcc = (labels == largest_label)
-    return lcc
+    """
+    Returns the largest connected component of a binary image.
+    Uses ravel() instead of flatten() to save memory.
+    """
+    labels = measure.label(image, background=0)
+    # 【核心修复】：使用 ravel() 替代 flatten()，避免内存爆炸
+    counts = np.bincount(labels.ravel())
+    if len(counts) > 1:
+        # ignore background
+        counts[0] = 0
+        largest_component = np.argmax(counts)
+        return (labels == largest_component).astype(np.uint8)
+    else:
+        return image
 
 
 def binary_fill_holes(image):

@@ -1,5 +1,4 @@
 import os
-
 import numpy as np
 import SimpleITK as sitk
 from random import choice
@@ -40,6 +39,7 @@ class Dataset(object):
                  base_folder=None,
                  image_base_folder=None,
                  setup_base_folder=None,
+                 landmarks_file=None,  # 【修复】显式添加此参数
                  cv='train_all',
                  input_gaussian_sigma=0.0,
                  label_gaussian_sigma=1.0,
@@ -79,11 +79,13 @@ class Dataset(object):
                  output_image_type=np.float32,
                  save_debug_images=False,
                  vertebrae_localization_eval=False,
-                 vertebrae_segmentation_eval=False
+                 vertebrae_segmentation_eval=False,
+                 **kwargs  # 【修复】保留 kwargs 以兼容其他参数
                  ):
-        """
-        Initializer.
-        """
+
+        # 强制单线程防止 SimpleITK 死锁
+        sitk.ProcessObject.SetGlobalDefaultNumberOfThreads(1)
+
         self.image_size = image_size
         self.image_spacing = image_spacing
         self.base_folder = base_folder or '../dataset'
@@ -129,14 +131,12 @@ class Dataset(object):
         self.save_debug_images = save_debug_images
         self.dim = 3
 
-        # 【修改1】如果没有传入路径，默认值保持相对路径，但通常我们会传入 args.output_folder
         self.image_base_folder = image_base_folder or os.path.join(self.base_folder, 'test_images_reoriented')
         self.setup_base_folder = setup_base_folder or os.path.join(self.base_folder, 'vertebrae_localization_result')
 
-        self.landmarks_file = os.path.join(self.setup_base_folder, 'landmarks.csv')
+        # 【修复】优先使用传入的 landmarks_file
+        self.landmarks_file = landmarks_file or os.path.join(self.setup_base_folder, 'landmarks.csv')
         self.valid_landmarks_file = os.path.join(self.setup_base_folder, 'valid_landmarks.csv')
-
-        # 【修改2】修正 bbs.csv 路径，使用 setup_base_folder (Step 1 结果输出目录)
         self.spine_bbs_file = os.path.join(self.setup_base_folder, 'bbs.csv')
 
         self.landmark_labels = [i + 1 for i in range(25)] + [28]
@@ -149,32 +149,9 @@ class Dataset(object):
         self.postprocessing = self.intensity_postprocessing_ct
         self.image_default_pixel_value = -1024
 
-        # 【修改3】核心修复：将 test_folder 指向 image_base_folder，而不是硬编码的路径
-        # 这样它就会去 E:\pythonWorkplace\PayerSeg_Revised\Data\Results 找文件
         self.test_folder = self.image_base_folder
-
-        # 评估文件 (仅在评估模式下使用，预测新数据时如果文件不存在也不影响)
-        self.ground_truth_landmarks_file = os.path.join(self.base_folder, 'test_images', 'landmarks.csv')
-
-        self.train_folder = os.path.join(self.base_folder, 'train_images')
-
-        # 这里的逻辑仅用于训练或有CV的情况，预测时我们会指定 input_folder
-        if self.cv in [0, 1, 2]:
-            self.cv_folder = os.path.join(self.setup_base_folder, os.path.join('cv', str(cv)))
-            self.train_file = os.path.join(self.cv_folder, 'train.txt')
-            self.test_file = os.path.join(self.cv_folder, 'val.txt')
-        elif self.cv == 'train_all':
-            self.train_file = os.path.join(self.setup_base_folder, 'train_all.txt')
-            self.test_file = os.path.join(self.setup_base_folder, 'train_all.txt')
-        else:
-            # inference 模式或者其它情况
-            pass
-
-        # 【修改4】确保 test_file 指向正确的 test_nii_name.txt
-        # 这个文件由 preprocess_overlap_cropped.py 生成在 output_folder 中
         self.test_file = os.path.join(self.test_folder, "test_nii_name.txt")
 
-        # 是否评估对应阶段
         self.vertebrae_localization_eval = vertebrae_localization_eval
         self.vertebrae_segmentation_eval = vertebrae_segmentation_eval
         if self.vertebrae_segmentation_eval:
@@ -182,30 +159,21 @@ class Dataset(object):
             self.generate_single_vertebrae = True
 
     def iterator(self, id_list_filename, random):
-        """
-        Iterator used for iterating over the dataset.
-        """
-
-        # vertebrae segmentation iterator
         if self.generate_single_vertebrae or self.generate_single_vertebrae_heatmap:
             valid_landmarks = utils.io.text.load_dict_csv(self.valid_landmarks_file, squeeze=False)
 
             def whole_list_postprocessing(id_list):
                 new_id_list = []
                 for image_id in id_list:
-                    # 确保 id 存在于 valid_landmarks 中
                     if image_id[0] in valid_landmarks:
                         for landmark in valid_landmarks[image_id[0]]:
                             new_id_list.append([image_id[0], landmark])
                 return new_id_list
 
             if not random and not self.resample_iterator:
-                id_list_iterator = IdListIterator(id_list_filename,
-                                                  random,
+                id_list_iterator = IdListIterator(id_list_filename, random,
                                                   whole_list_postprocessing=whole_list_postprocessing,
-                                                  keys=['image_id', 'landmark_id'],
-                                                  name='iterator',
-                                                  use_shuffle=False,
+                                                  keys=['image_id', 'landmark_id'], name='iterator', use_shuffle=False,
                                                   test_folder=self.test_folder)
             else:
                 def id_to_label_function(curr_id):
@@ -218,29 +186,17 @@ class Dataset(object):
                         return 'l'
                     return 'u'
 
-                id_list_iterator = ResampleLabelsIdListIterator(id_list_filename,
-                                                                None,
-                                                                ['c', 't', 'l'],
+                id_list_iterator = ResampleLabelsIdListIterator(id_list_filename, None, ['c', 't', 'l'],
                                                                 whole_list_postprocessing=whole_list_postprocessing,
                                                                 id_to_label_function=id_to_label_function,
-                                                                keys=['image_id', 'landmark_id'],
-                                                                name='iterator',
+                                                                keys=['image_id', 'landmark_id'], name='iterator',
                                                                 test_folder=self.test_folder)
-
-        # spine localization iterators vertebrae localization iterators
         else:
-            id_list_iterator = IdListIterator(id_list_filename,
-                                              random,
-                                              keys=['image_id'],
-                                              name='iterator',
-                                              use_shuffle=False,
-                                              test_folder=self.test_folder)
+            id_list_iterator = IdListIterator(id_list_filename, random, keys=['image_id'], name='iterator',
+                                              use_shuffle=False, test_folder=self.test_folder)
         return id_list_iterator
 
     def landmark_mask_preprocessing(self, image):
-        """
-        Creates a landmark mask of ones, but with 25 mm zeroes on the top and the bottom of the volumes.
-        """
         image_np = np.ones(list(reversed(image.GetSize())), np.uint8)
         spacing_z = image.GetSpacing()[2]
         size = 25
@@ -249,9 +205,6 @@ class Dataset(object):
         return utils.sitk_np.np_to_sitk(image_np)
 
     def datasources(self, iterator, image_cached, labels_cached, image_preprocessing, cache_size):
-        """
-        Returns the data sources that load data.
-        """
         datasources_dict = {}
         if image_cached:
             image_data_source = CachedImageDataSource
@@ -260,23 +213,15 @@ class Dataset(object):
             image_data_source = ImageDataSource
             image_source_kwargs = {}
 
-        # 读取图像
-        datasources_dict['image'] = image_data_source(self.image_base_folder,
-                                                      '',
-                                                      '',
-                                                      '.nii.gz',
-                                                      set_zero_origin=False,
-                                                      set_identity_direction=False,
-                                                      set_identity_spacing=False,
-                                                      sitk_pixel_type=sitk.sitkInt16,
-                                                      preprocessing=image_preprocessing,
-                                                      name='image',
-                                                      parents=[iterator],
-                                                      **image_source_kwargs)
+        datasources_dict['image'] = image_data_source(self.image_base_folder, '', '', '.nii.gz', set_zero_origin=False,
+                                                      set_identity_direction=False, set_identity_spacing=False,
+                                                      sitk_pixel_type=sitk.sitkInt16, preprocessing=image_preprocessing,
+                                                      name='image', parents=[iterator], **image_source_kwargs)
+
         if self.generate_landmark_mask:
-            datasources_dict['landmark_mask'] = LambdaNode(self.landmark_mask_preprocessing,
-                                                           name='landmark_mask',
+            datasources_dict['landmark_mask'] = LambdaNode(self.landmark_mask_preprocessing, name='landmark_mask',
                                                            parents=[datasources_dict['image']])
+
         if self.generate_labels or self.generate_single_vertebrae:
             if labels_cached:
                 image_data_source = CachedImageDataSource
@@ -284,29 +229,15 @@ class Dataset(object):
             else:
                 image_data_source = ImageDataSource
                 image_source_kwargs = {}
-            # 注意：这里的 Labels 默认去找 _seg.nii.gz，预测模式下如果没有GT可以忽略错误，
-            # 或者在 MainLoop 中处理。目前代码是假设如果有 generate_labels 就会去读。
-            # 在预测脚本中，只有 vertebrae_segmentation_eval=True 时才会开启 generate_labels。
-            # 我们在 main_test 中默认是 False，所以不会去读 GT。
-            datasources_dict['labels'] = image_data_source(self.image_base_folder,
-                                                           '',
-                                                           '_seg',
-                                                           '.nii.gz',
-                                                           set_zero_origin=False,
-                                                           set_identity_direction=False,
-                                                           set_identity_spacing=False,
-                                                           sitk_pixel_type=sitk.sitkUInt8,
-                                                           name='labels',
-                                                           parents=[iterator],
-                                                           **image_source_kwargs)
+            datasources_dict['labels'] = image_data_source(self.image_base_folder, '', '_seg', '.nii.gz',
+                                                           set_zero_origin=False, set_identity_direction=False,
+                                                           set_identity_spacing=False, sitk_pixel_type=sitk.sitkUInt8,
+                                                           name='labels', parents=[iterator], **image_source_kwargs)
 
         if self.generate_landmarks or self.generate_heatmaps or self.generate_spine_heatmap or self.generate_single_vertebrae or self.generate_single_vertebrae_heatmap or (
                 self.translate_to_center_landmarks and not (self.load_spine_landmarks or self.load_spine_bbs)):
-            datasources_dict['landmarks'] = LandmarkDataSource(self.landmarks_file,
-                                                               self.num_landmarks,
-                                                               self.dim,
-                                                               name='landmarks',
-                                                               parents=[iterator])
+            datasources_dict['landmarks'] = LandmarkDataSource(self.landmarks_file, self.num_landmarks, self.dim,
+                                                               name='landmarks', parents=[iterator])
             datasources_dict['landmarks_bb'] = LambdaNode(self.image_landmark_bounding_box, name='landmarks_bb',
                                                           parents=[datasources_dict['image'],
                                                                    datasources_dict['landmarks']])
@@ -320,7 +251,6 @@ class Dataset(object):
                                                                      name='spine_landmarks', parents=[iterator])
 
         if self.load_spine_bbs:
-            # print('读取bbs')
             datasources_dict['spine_bb'] = LabelDatasource(self.spine_bbs_file, name='spine_landmarks',
                                                            parents=[iterator])
             datasources_dict['landmarks_bb'] = LambdaNode(self.image_bounding_box, name='landmarks_bb',
@@ -332,19 +262,13 @@ class Dataset(object):
                                                                  parents=[datasources_dict['landmarks_bb']])
 
             if self.vertebrae_localization_eval:
-                datasources_dict['landmarks'] = LandmarkDataSource(self.ground_truth_landmarks_file,
-                                                                   self.num_landmarks,
-                                                                   self.dim,
-                                                                   name='landmarks',
-                                                                   parents=[iterator])
+                datasources_dict['landmarks'] = LandmarkDataSource(self.ground_truth_landmarks_file, self.num_landmarks,
+                                                                   self.dim, name='landmarks', parents=[iterator])
 
         return datasources_dict
 
     def data_generators(self, iterator, datasources, transformation, image_post_processing,
                         random_translation_single_landmark, image_size, crop=False):
-        """
-        Returns the data generators that process one input.
-        """
         generators_dict = {}
         kwparents = {'output_size': image_size}
         image_datasource = datasources['image'] if not crop else LambdaNode(self.landmark_based_crop,
@@ -352,84 +276,56 @@ class Dataset(object):
                                                                             kwparents={'image': datasources['image'],
                                                                                        'landmarks': datasources[
                                                                                            'landmarks']})
-        generators_dict['image'] = ImageGenerator(self.dim,
-                                                  None,
-                                                  self.image_spacing,
-                                                  interpolator='linear',
+        generators_dict['image'] = ImageGenerator(self.dim, None, self.image_spacing, interpolator='linear',
                                                   post_processing_np=image_post_processing,
                                                   data_format=self.data_format,
                                                   resample_default_pixel_value=self.image_default_pixel_value,
-                                                  np_pixel_type=self.output_image_type,
-                                                  name='image',
-                                                  parents=[image_datasource, transformation],
-                                                  kwparents=kwparents)
+                                                  np_pixel_type=self.output_image_type, name='image',
+                                                  parents=[image_datasource, transformation], kwparents=kwparents)
 
         if self.vertebrae_localization_eval:
-            generators_dict['landmarks'] = LandmarkGenerator(self.dim,
-                                                             None,
-                                                             self.image_spacing,
-                                                             data_format=self.data_format,
-                                                             name='landmarks',
+            generators_dict['landmarks'] = LandmarkGenerator(self.dim, None, self.image_spacing,
+                                                             data_format=self.data_format, name='landmarks',
                                                              parents=[datasources['landmarks'], transformation],
                                                              kwparents=kwparents)
 
         if self.generate_landmark_mask:
-            generators_dict['landmark_mask'] = ImageGenerator(self.dim,
-                                                              None,
-                                                              self.image_spacing,
-                                                              interpolator='nearest',
-                                                              data_format=self.data_format,
-                                                              resample_default_pixel_value=0,
-                                                              name='landmark_mask',
+            generators_dict['landmark_mask'] = ImageGenerator(self.dim, None, self.image_spacing,
+                                                              interpolator='nearest', data_format=self.data_format,
+                                                              resample_default_pixel_value=0, name='landmark_mask',
                                                               parents=[datasources['landmark_mask'], transformation],
                                                               kwparents=kwparents)
         if self.generate_labels:
-            generators_dict['labels'] = ImageGenerator(self.dim,
-                                                       None,
-                                                       self.image_spacing,
-                                                       interpolator='nearest',
+            generators_dict['labels'] = ImageGenerator(self.dim, None, self.image_spacing, interpolator='nearest',
                                                        post_processing_np=self.split_labels,
-                                                       data_format=self.data_format,
-                                                       name='labels',
+                                                       data_format=self.data_format, name='labels',
                                                        parents=[datasources['labels'], transformation],
                                                        kwparents=kwparents)
         if self.generate_heatmaps or self.generate_spine_heatmap:
-            generators_dict['heatmaps'] = LandmarkGeneratorHeatmap(self.dim,
-                                                                   None,
-                                                                   self.image_spacing,
-                                                                   sigma=self.heatmap_sigma,
-                                                                   scale_factor=1.0,
-                                                                   normalize_center=True,
-                                                                   data_format=self.data_format,
+            generators_dict['heatmaps'] = LandmarkGeneratorHeatmap(self.dim, None, self.image_spacing,
+                                                                   sigma=self.heatmap_sigma, scale_factor=1.0,
+                                                                   normalize_center=True, data_format=self.data_format,
                                                                    name='heatmaps',
                                                                    parents=[datasources['landmarks'], transformation],
                                                                    kwparents=kwparents)
         if self.generate_landmarks:
-            generators_dict['landmarks'] = LandmarkGenerator(self.dim,
-                                                             None,
-                                                             self.image_spacing,
-                                                             data_format=self.data_format,
-                                                             name='landmarks',
+            generators_dict['landmarks'] = LandmarkGenerator(self.dim, None, self.image_spacing,
+                                                             data_format=self.data_format, name='landmarks',
                                                              parents=[datasources['landmarks'], transformation],
                                                              kwparents=kwparents)
 
         if self.generate_single_vertebrae_heatmap:
             single_landmark = LambdaNode(
                 lambda id_dict, landmarks: landmarks[int(id_dict['landmark_id']):int(id_dict['landmark_id']) + 1],
-                name='single_landmark',
-                parents=[iterator, datasources['landmarks']])
+                name='single_landmark', parents=[iterator, datasources['landmarks']])
             if random_translation_single_landmark:
                 single_landmark = LambdaNode(lambda l: [Landmark(
                     l[0].coords + float_uniform(-self.random_translation_single_landmark,
                                                 self.random_translation_single_landmark, [self.dim]), True)],
-                                             name='single_landmark_translation',
-                                             parents=[single_landmark])
-            generators_dict['single_heatmap'] = LandmarkGeneratorHeatmap(self.dim,
-                                                                         None,
-                                                                         self.image_spacing,
+                                             name='single_landmark_translation', parents=[single_landmark])
+            generators_dict['single_heatmap'] = LandmarkGeneratorHeatmap(self.dim, None, self.image_spacing,
                                                                          sigma=self.single_heatmap_sigma,
-                                                                         scale_factor=1.0,
-                                                                         normalize_center=True,
+                                                                         scale_factor=1.0, normalize_center=True,
                                                                          data_format=self.data_format,
                                                                          np_pixel_type=self.output_image_type,
                                                                          name='single_heatmap',
@@ -440,33 +336,19 @@ class Dataset(object):
                 if self.data_format == 'channels_first':
                     generators_dict['single_label'] = LambdaNode(
                         lambda id_dict, images: images[int(id_dict['landmark_id']) + 1:int(id_dict['landmark_id']) + 2,
-                                                ...],
-                        name='single_label',
+                                                ...], name='single_label',
                         parents=[iterator, generators_dict['labels']])
                 else:
                     generators_dict['single_label'] = LambdaNode(lambda id_dict, images: images[..., int(
-                        id_dict['landmark_id']) + 1:int(id_dict['landmark_id']) + 2],
-                                                                 name='single_label',
+                        id_dict['landmark_id']) + 1:int(id_dict['landmark_id']) + 2], name='single_label',
                                                                  parents=[iterator, generators_dict['labels']])
             else:
-                # 预测阶段走这里，不加载 GT labels
-                # 但这里有一个依赖: LambdaNode(..., parents=[iterator, labels_unsmoothed])
-                # labels_unsmoothed 依赖 datasources['labels']
-                # 如果是测试集预测，我们没有 labels。
-                # 解决方法：在 vertebrae_segmentation_eval=False 时，我们不需要这个 generator。
-                # 但是 Step 3 需要 `single_label` 吗？
-                # main_vertebrae_segmentation 里的 test_full_image:
-                # if self.has_validation_groundtruth: single_label = ...
-                # else: prediction = self.model(...)
-                # 也就是说，如果只是预测，不需要 single_label 生成器。
-                # 所以我们只在 generate_labels=True 时生成 single_label。
                 pass
 
         if self.generate_spine_heatmap:
             generators_dict['spine_heatmap'] = LambdaNode(lambda images: normalize(
                 gaussian(np.sum(images, axis=0 if self.data_format == 'channels_first' else -1, keepdims=True),
-                         sigma=self.spine_heatmap_sigma), out_range=(0, 1)),
-                                                          name='spine_heatmap',
+                         sigma=self.spine_heatmap_sigma), out_range=(0, 1)), name='spine_heatmap',
                                                           parents=[generators_dict['heatmaps']])
 
         return generators_dict
@@ -520,13 +402,11 @@ class Dataset(object):
 
     def landmark_based_crop(self, image, landmarks):
         all_coords = [l.coords for l in landmarks if l.is_valid]
-        if len(all_coords) < 2:
-            return image
+        if len(all_coords) < 2: return image
         median_distance = np.median(
             [np.linalg.norm(all_coords[i] - all_coords[i + 1]) for i in range(len(all_coords) - 1)])
         min_coords = np.min(all_coords, axis=0)
         max_coords = np.max(all_coords, axis=0)
-
         upper_crop = 0
         lower_crop = 0
         if not landmarks[0].is_valid:
@@ -542,12 +422,8 @@ class Dataset(object):
         if not self.normalize_zero_mean_unit_variance:
             random_lambda = float_uniform(0.9, 1.1)
             image = change_gamma_unnormalized(image, random_lambda)
-            output = ShiftScaleClamp(shift=0,
-                                     scale=1 / 2048,
-                                     random_shift=self.random_intensity_shift,
-                                     random_scale=self.random_intensity_scale,
-                                     clamp_min=-1.0,
-                                     clamp_max=1.0)(image)
+            output = ShiftScaleClamp(shift=0, scale=1 / 2048, random_shift=self.random_intensity_shift,
+                                     random_scale=self.random_intensity_scale, clamp_min=-1.0, clamp_max=1.0)(image)
         else:
             random_lambda = float_uniform(0.9, 1.1)
             image = change_gamma_unnormalized(image, random_lambda)
@@ -556,10 +432,7 @@ class Dataset(object):
 
     def intensity_postprocessing_ct(self, image):
         if not self.normalize_zero_mean_unit_variance:
-            output = ShiftScaleClamp(shift=0,
-                                     scale=1 / 2048,
-                                     clamp_min=-1.0,
-                                     clamp_max=1.0)(image)
+            output = ShiftScaleClamp(shift=0, scale=1 / 2048, clamp_min=-1.0, clamp_max=1.0)(image)
         else:
             output = normalize_zero_mean_unit_variance(image)
         return output
@@ -588,13 +461,11 @@ class Dataset(object):
                                     flip.Random(self.dim, [0.5 if self.random_flip else 0.0, 0.0, 0.0]),
                                     translation.OriginToOutputCenter(self.dim, None, self.image_spacing),
                                     deformation.Output(self.dim, [6, 6, 6], [self.random_deformation] * self.dim, None,
-                                                       self.image_spacing)
-                                    ])
+                                                       self.image_spacing)])
         comp = composite.Composite(self.dim, transformation_list, name='image', kwparents=kwparents)
         return LambdaNode(lambda transformation, output_size: sitk.DisplacementFieldTransform(
             sitk.TransformToDisplacementField(transformation, sitk.sitkVectorFloat64, size=output_size,
-                                              outputSpacing=self.image_spacing)),
-                          name='image',
+                                              outputSpacing=self.image_spacing)), name='image',
                           kwparents={'transformation': comp, 'output_size': image_size})
 
     def spatial_transformation(self, iterator, datasources, image_size):
@@ -625,9 +496,6 @@ class Dataset(object):
             return image_size
 
     def dataset_train(self):
-        """
-        Returns the training dataset.
-        """
         iterator = self.iterator(self.train_file, True)
         sources = self.datasources(iterator, False, False, self.preprocessing_random, 8192)
         if self.use_variable_image_size:
@@ -643,16 +511,11 @@ class Dataset(object):
         generators = self.data_generators(iterator, sources, reference_transformation, self.postprocessing_random, True,
                                           image_size, self.crop_image_top_bottom)
         generators['image_id'] = LambdaNode(lambda d: np.array(d['image_id']), name='image_id', parents=[iterator])
-        return GraphDataset(data_generators=list(generators.values()),
-                            data_sources=list(sources.values()),
-                            transformations=[reference_transformation],
-                            iterator=iterator,
+        return GraphDataset(data_generators=list(generators.values()), data_sources=list(sources.values()),
+                            transformations=[reference_transformation], iterator=iterator,
                             debug_image_folder='debug_train' if self.save_debug_images else None)
 
     def dataset_val(self):
-        """
-        Returns the validation dataset.
-        """
         if self.cv == 'inference':
             iterator = 'iterator'
         else:
@@ -678,8 +541,6 @@ class Dataset(object):
         generators = self.data_generators(iterator, sources, reference_transformation, self.postprocessing, False,
                                           image_size, False)
         generators['image_id'] = LambdaNode(lambda d: np.array(d['image_id']), name='image_id', parents=[iterator])
-        return GraphDataset(data_generators=list(generators.values()),
-                            data_sources=list(sources.values()),
-                            transformations=[reference_transformation],
-                            iterator=iterator,
+        return GraphDataset(data_generators=list(generators.values()), data_sources=list(sources.values()),
+                            transformations=[reference_transformation], iterator=iterator,
                             debug_image_folder='debug_val' if self.save_debug_images else None)
