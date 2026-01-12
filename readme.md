@@ -42,15 +42,15 @@ The system adopts a **Coarse-to-Fine** strategy, divided into three cascaded sta
 ## **📂 Directory Structure**
 
 ```Plaintext
-PayerSeg\_Revised/  
+PayerSeg_Revised/  
 ├── Data/                   \# Data directory (Raw Images & Results)  
-├── model\_weights/          \# Pre-trained model weights (Step 1, 2, 3\)  
-├── PayerSeg\_Revised2/      \# Core source code  
-│   ├── main\_test\_overlap\_cropped.py  \# \[Entry Point\] Runs the full pipeline  
-│   ├── main\_spine\_localization...    \# Logic for Stage 1  
-│   ├── main\_vertebrae\_localization...\# Logic for Stage 2  
-│   ├── main\_vertebrae\_segmentation...\# Logic for Stage 3  
-│   ├── dataset\_overlap\_cropped.py    \# Data loading and augmentation  
+├── model_weights/          \# Pre-trained model weights (Step 1, 2, 3\)  
+├── PayerSeg_Revised2/      \# Core source code  
+│   ├── main_test_overlap_cropped.py  \# \[Entry Point\] Runs the full pipeline  
+│   ├── main_spine_localization...    \# Logic for Stage 1  
+│   ├── main_vertebrae_localization...\# Logic for Stage 2  
+│   ├── main_vertebrae_segmentation...\# Logic for Stage 3  
+│   ├── dataset_overlap_cropped.py    \# Data loading and augmentation  
 │   └── network.py                    \# Network architecture definitions  
 └── requirements.txt        \# Project dependencies
 ```
