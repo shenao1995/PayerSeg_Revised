@@ -79,9 +79,9 @@ python PayerSeg_Revised2/main_test_overlap_cropped.py \\
 
 After the program finishes, the following result structure will be generated for each case in the output folder:
 
-* step1\_spine\_localization/: Heatmap predictions of the spine region.  
-* step2\_vertebrae\_localization/: Vertebral centroids coordinates (landmarks.csv) and visualization projections.  
-* step3\_vertebrae\_segmentation/: Individual vertebrae segmentation results and the final merged \_seg.nii.gz file.
+* step1_spine_localization/: Heatmap predictions of the spine region.  
+* step2_vertebrae_localization/: Vertebral centroids coordinates (landmarks.csv) and visualization projections.  
+* step3_vertebrae_segmentation/: Individual vertebrae segmentation results and the final merged \_seg.nii.gz file.
 
 ---
 
