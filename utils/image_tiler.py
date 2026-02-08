@@ -1,4 +1,3 @@
-
 import numpy as np
 
 
@@ -72,6 +71,12 @@ class TilerBase(object):
         while True:
             if current_inc_dim >= self.dim:
                 raise RuntimeError('The tiler is already at end position.')
+
+            # 【添加此安全检查】如果需要切片但步长为 0，抛出异常而不是死循环
+            if self.cropped_size[current_inc_dim] < self.full_size[current_inc_dim] and self.step_size[
+                current_inc_dim] <= 0:
+                raise ValueError(
+                    f"Dimension {current_inc_dim} needs tiling (crop {self.cropped_size[current_inc_dim]} < full {self.full_size[current_inc_dim]}) but step_size is {self.step_size[current_inc_dim]}. This causes an infinite loop.")
             if self.cropped_size[current_inc_dim] > self.full_size[current_inc_dim]:
                 # current dimension size is larger than the full size -> increment
                 current_inc_dim += 1
