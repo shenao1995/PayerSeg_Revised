@@ -155,18 +155,18 @@ class MainLoop(MainLoopBase):
         max_patch_limit = 500  # 根据你的病例大小设定上限
         for iters in zip(image_tiler, prediction_tiler, prediction_local_tiler, prediction_spatial_tiler):
             cur_image_t, cur_pred_t, cur_local_t, cur_spatial_t = iters
-            print(f"DEBUG: Processing patch at offset {image_tiler.current_offset}")  # 追踪 Patch 进度
+            # print(f"DEBUG: Processing patch at offset {image_tiler.current_offset}")  # 追踪 Patch 进度
             patch_count += 1
             if patch_count > max_patch_limit:
                 print(f"WARNING: Exceeded max patch limit for {dataset_entry['id']['image_id']}, breaking loop.")
                 break
 
             current_image = cur_image_t.get_current_data(full_image)
-            print("DEBUG: Starting model inference...")
+            # print("DEBUG: Starting model inference...")
             # 推理
             prediction, prediction_local, prediction_spatial = self.model(np.expand_dims(current_image, axis=0),
                                                                           training=False)
-            print("DEBUG: Inference finished.")
+            # print("DEBUG: Inference finished.")
             # 【修复 2】显式转换为 numpy 数组，解决 AttributeError
             prediction = prediction.numpy()
             prediction_local = prediction_local.numpy()
@@ -222,9 +222,9 @@ class MainLoop(MainLoopBase):
 
         for _ in tqdm(range(num_entries), desc='Localization'):
             try:
-                print("DEBUG: Fetching next entry...")  # 添加此行
+                # print("DEBUG: Fetching next entry...")  # 添加此行
                 dataset_entry = self.dataset_val.get_next()
-                print(f"DEBUG: Processing ID: {dataset_entry['id']['image_id']}")  # 添加此行
+                # print(f"DEBUG: Processing ID: {dataset_entry['id']['image_id']}")  # 添加此行
                 current_id = dataset_entry['id']['image_id']
                 datasources = dataset_entry['datasources']
                 input_image = datasources['image']
