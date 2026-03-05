@@ -3,25 +3,9 @@
 ## **📖 Project Overview**
 ![Comparison: Standard vs PayerSeg_Revised Pipeline](assets/seg_compare.jpg)
 
-**PayerSeg\_Revised** is a deep learning-based system for fully automated spine CT segmentation. This project is an improved and refactored version of the [Coarse to Fine Vertebrae Localization and Segmentation with SpatialConfiguration-Net and U-Net](https://www.scitepress.org/Link.aspx?doi=10.5220/0008975201240133) method proposed by Payer et al., which was the winning solution of the VerSe Challenge.
+**PayerSeg\_Revised** is a fully automated spine CT segmentation system. This project refactors the award-winning pipeline by Payer et al. ([Coarse to Fine Vertebrae Localization and Segmentation with SpatialConfiguration-Net and U-Net](https://www.scitepress.org/Link.aspx?doi=10.5220/0008975201240133)) into a highly efficient, end-to-end inference framework. By retraining the architecture on a high-quality private clinical dataset, we have significantly enhanced prediction accuracy and processing speed compared to the original three-stage method.
 
-We have re-engineered the original architecture by consolidating the three independent processing stages into a highly efficient automated inference pipeline. Furthermore, we have **retrained all model weights** using a high-quality **private dataset** to better adapt to specific clinical data distributions, significantly improving prediction accuracy and processing efficiency.
-
-## **🚀 Key Improvements**
-
-1. **Unified Three-Stage Pipeline**:  
-   * Refactored the codebase to integrate **Spine Localization**, **Vertebrae Localization**, and **Vertebrae Segmentation** into a single entry script (main\_test\_overlap\_cropped.py).  
-   * Implemented automatic data flow between stages, eliminating the need for manual intervention with intermediate results.  
-2. **Retraining on Custom Dataset**:  
-   * To enhance model performance in specific data scenarios, we retrained all core models (U-Net and SpatialConfiguration-Net) using a proprietary dataset of spine CT scans.  
-   * Optimized robustness against various spinal morphologies and pathological conditions.  
-3. **Overlap Cropping Strategy**:  
-   * Integrated a sliding-window based Overlap Cropping inference mechanism for high-resolution or large field-of-view (FOV) CT scans.  
-   * Effectively resolves GPU memory constraints while ensuring segmentation continuity at patch boundaries.  
-4. **Engineering Optimizations**:  
-   * **Multiprocessing Isolation**: Utilized Python's multiprocessing to solve TensorFlow's GPU memory release and graph conflict issues during multi-stage inference, achieving automatic memory management.  
-   * **Automated Result Organization**: Automatically creates independent result directories for each case, classifying and storing heatmaps, landmark projections, and final segmentation files (.nii.gz) for easy visual inspection.
-
+Model Link: [Download Models](https://drive.google.com/drive/folders/1nLMXw2zFnWsQlypIAM2z3oIcM8zDxzSi?usp=sharing)
 ## **🛠️ Technical Architecture**
 
 The system adopts a **Coarse-to-Fine** strategy, divided into three cascaded stages:
